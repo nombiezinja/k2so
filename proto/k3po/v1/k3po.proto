@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package k3po.v1;
+
+service K3PO {
+  rpc StartProcess (StartProcessRequest) returns (StartProcessResponse);
+  rpc StopProcess (StopProcessRequest) returns (StopProcessResponse);
+  rpc GetProcessStatus (GetProcessStatusRequest) returns (GetProcessStatusResponse);
+  rpc StreamProcessOutput (StreamProcessOutputRequest) returns (stream ProcessOutputChunk);
+}
+
+message StartProcessRequest {}
+message StartProcessResponse {}
+message StopProcessRequest {}
+message StopProcessResponse {}
+message GetProcessStatusRequest {}
+message GetProcessStatusResponse {}
+message StreamProcessOutputRequest {}
+message ProcessOutputChunk {}
+
+enum ProcessState {
+  PROCESS_STATE_UNSPECIFIED = 0;
+  PROCESS_STATE_RUNNING = 1;
+  PROCESS_STATE_EXITED = 2;
+  PROCESS_STATE_UNKNOWN = 3;
+  PROCESS_STATE_TERMINATED = 4;
+}
