@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package k3po.v1;
+option go_package = "github.com/nombiezinja/teleport-ti-zhang-challenge-1/proto/k3po/v1;v1";
 
 service K3PO {
   rpc StartProcess (StartProcessRequest) returns (StartProcessResponse);
