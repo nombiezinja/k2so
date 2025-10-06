@@ -1,0 +1,23 @@
+# build artefacts 
+/bin/
+/build/
+/dist/
+*.out
+
+# don't need to commit vendor since not a compliance-locked project
+/vendor/
+# temporary files 
+/go.sum.tmp
+
+# generated protobufs -- commented out, checking these in for now
+# *.pb.go
+
+# logs and temp files
+*.log
+*.tmp
+
+# OS and IDE stuffs
+.DS_Store
+.idea/
+.vscode/
+*.swp
