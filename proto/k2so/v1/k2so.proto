@@ -14,18 +14,25 @@ service K2SO {
 }
 
 message RunRequest {
+  // binary is the absolute path to executable (validated: exists, executable)
   string binary = 1;
+  // args contains command arguments (max 64 args, 4KB per arg, no shell interpretation).
   repeated string args = 2;
+  // env contains environment variables (allow-listed keys only, 4KB per value).
   map<string, string> env = 3;
+  // working_dir is the working directory (absolute path, must exist).
   string working_dir = 4;
 }
 
 message RunResponse {
+  // job_id is the server-generated unique identifier for the job.
   string job_id = 1;
   // Errors communicated via gRPC status codes:
   // - INVALID_ARGUMENT: bad binary path, invalid args
-  // - RESOURCE_EXHAUSTED: job limits exceeded  
+  // - RESOURCE_EXHAUSTED: job limits exceeded
   // - PERMISSION_DENIED: not authorized for 'run' action
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
 }
 
 message DeleteRequest {
@@ -35,8 +42,10 @@ message DeleteRequest {
 message DeleteResponse {
   // Errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
-  // - PERMISSION_DENIED: job not owned by requesting principal  
-  // - FAILED_PRECONDITION: job already terminated
+  // - PERMISSION_DENIED: job not owned by requesting principal
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
+  // Success: job terminated and removed from registry (even if already terminated)
 }
 
 message DescribeRequest {
@@ -44,21 +53,36 @@ message DescribeRequest {
 }
 
 message DescribeResponse {
+  // job_id is the unique identifier for the job.
   string job_id = 1;
+  // status is the current job execution state.
   JobStatus status = 2;
+  // pid is the Linux process ID (optional, set when job starts).
   optional int32 pid = 3;
+  // binary is the absolute path to the executable.
   string binary = 4;
+  // args contains the command line arguments as executed.
   repeated string args = 5;
+  // created_at is when the job was created.
   google.protobuf.Timestamp created_at = 6;
+  // started_at is when the process started (optional).
   optional google.protobuf.Timestamp started_at = 7;
+  // finished_at is when the process finished (optional).
   optional google.protobuf.Timestamp finished_at = 8;
+  // Process termination details (available until job deleted from registry).
+  // exit_code is set when process exited normally.
   optional int32 exit_code = 9;
+  // signal is set when process was killed by signal.
   optional int32 signal = 10;
+  // owner is the principal from mTLS client cert SAN.
   string owner = 11;
+  // resource_usage contains job resource consumption details (optional).
   optional JobResourceUsage resource_usage = 12;
   // Errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
 }
 
 message JobResourceUsage {
@@ -83,11 +107,17 @@ message LogsResponse {
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
   // - RESOURCE_EXHAUSTED: output size limits exceeded
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
 }
 
-// Job execution lifecycle states (distinct from gRPC status codes)
-// RPC errors (auth, validation) use gRPC status codes
-// Job execution states use this enum + exit_code/signal fields for details
+// Job execution lifecycle states (distinct from gRPC status codes).
+// RPC errors (auth, validation) use gRPC status codes.
+// Job execution states use this enum + exit_code/signal fields for details.
+//
+// Design choice: Job-level states rather than Linux process states (R/S/D/Z/T).
+// Linux sleeping/waiting processes all appear as RUNNING to job clients.
+// Clients care about job completion, not low-level process scheduling states.
 enum JobStatus {
   JOB_STATUS_UNSPECIFIED = 0;
   JOB_STATUS_PENDING = 1;
