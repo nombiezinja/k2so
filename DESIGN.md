@@ -7,22 +7,41 @@
 - K2SO died too early, this control plane would too since everything is built with minimal scope and minimal prod considerations around reliability and resilience
 - A more serious name is preferred for prod-ready projects (e.g. processctl,jobctl,etc). Boring is better for enterprise tooling.
 
-## Design Approach 
+## Architecture 
+- CLI Client (thin): Presents mTLS cert, constructs gRPC requests
+- gRPC Server: Handles authn/authz, delegates to Runner
+- Job Runner: Spawns jobs, captures output to temp files
+- Storage: Anonymous temp files for bounded-memory output streaming `/tmp/k2so/job-uuid1234.out`; clean up on server shut down
+
+## Trust Boundaries
+- Network: mTLS (TLS 1.3) with mutual authentication
+- Filesystem: Server validates exec targets; temp files isolated per job  
+- Process: Direct execve() without shell interpretation
+
+### Request Flow
+client == mTLS/TLS1.3 ==> server
+  - initial validation (arg/env caps, required fields)
+  - authN (verify client cert; extract SAN identity + attrs)
+  - authZ (hardcoded ABAC: subject × resource × action × context)
+  - Deep validate (absolute path, EvalSymlinks, allow-listed dirs, exec perms)
+  - Prepare job (job_id, anon tmp output file, new PGID, env)
+  - Spawn (execve via exec.CommandContext; no shell/TTY)
+  - Stream (byte offset, ReadAt, coalesced notify; binary-safe)
+  - Lifecycle (TERM grace → KILL; reap; finalize status; GC TBD)
+
+## Design Details
 1 - Input Validation 
-- Happens on server-side. To minimize scope, will have thin client, using `flag` rather than `cobra`.
+- Thin client, server-side validation. Client will use `flag` rather than `cobra`.
   - Can upgrade in future should need arise. 
-- Additional input validation rules in Security Considerations (TODO link this)
+- Additional input validation rules in [Security Considerations: Input Validation](#input-validation)
 
 2 - Supported processes
 - Executables on disk (e.g. /usr/bin/ls, /usr/bin/ruby)
-- No raw syscalls: jobs can invoke syscalls, but control plane does not directly invoke kernal interfaces
-- Default is absolute path only; support for $PATH look up in TODO
-- TODO link security considerations
+- No raw syscalls: jobs can invoke syscalls, but control plane does not directly invoke kernel interfaces
+- Default is absolute path only; support for $PATH look up in TODO (see [Security Considerations: Input Validation](#input-validation))
 
-### Process Execution Assumptions 
-
-### Authentication
-- mTLS over TLS1.3 to satisfy requirement for strongest security
+3 - Authentication
+- mTLS over TLS1.3 to satisfy requirement for strongest transport encryption
  - enforce this in Go by setting min/max version 
  - Go handles choice of cipher suite (TODO add the thingies Go use for default here)
    - https://go.dev/blog/tls-cipher-suites Go began doing this from 1.7, just ensure TLS13 is configured and forced with tls.Config
@@ -31,7 +50,7 @@
 - identity extracted from client certificates 
 - Future: let's encrypt, enterprise CA/PKI
 
-### Authorization 
+4 - Authorization 
 - Hard-code permission model 
 - ABAC instead of RBAC for extensibility and security
   - abilities: start, stop view, stream
@@ -40,17 +59,17 @@
 - stateless authz, rely on CA to issue/revoke certs. server only checks for whether identity extracted from client certs has authority to perform action on resourceß
 - Future: use OPA and write Rego to replace hard-coded authz policies
 
-### Output Streaming 
-1 - efficient discovery: Coalescing notify channel (`chan struct{}`, buffer=1) prevents polling
-2 - historical replay: Late joiners start at offset=0, get full output from process start
-3 - bounded heap memory: Anonymous temp file prevents unbounded Go memory growth
-4 - no text assumptions: Raw byte streaming throughout, binary-safe
-5 - concurrent client support: `os.File.ReadAt` allows multiple readers without contention
+5 - Output Streaming 
+  - efficient discovery: Coalescing notify channel (`chan struct{}`, buffer=1) prevents polling
+  - historical replay: Late joiners start at offset=0, get full output from process start
+  - bounded heap memory: Anonymous temp file prevents unbounded Go memory growth
+  - no text assumptions: Raw byte streaming throughout, bina  -safe
+  - concurrent client support: `os.File.ReadAt` allows multiple readers without contention
 
-### Resource management:
-1 - heap memory: bounded by design (fixed buffers, no output accumulation)
-2 - disk usage: currently unbounded (TODO: add per-job output size limits)
-3 - file cleanup: anonymous files deleted when last reader exits (TODO - decide on whether to put in scheduled cleanup)
+6 - Resource management:
+    - heap memory: bounded by design (fixed buffers, no output accumulation)
+    - disk usage: currently unbounded (TODO: add p    -job output size limits)
+    - file cleanup: anonymous files deleted when last reader exits (TODO - decide on whether to put in scheduled cleanup)
 
 ### Design Rationale
 - Minimal, discoverable commands for core job lifecycle and output streaming
@@ -75,7 +94,7 @@
 - Hardcoded configurations with TODO comments for future extensibility
 
 #### Testing
-- Minimal happy/err path test coverage for critical paths: authn, authz,
+- Minimal happy/err path test coverage for critical paths: authn, authz
 -	Team checkoff needed: 3rd party dependency "github.com/stretchr/testify/require" for readable tests
 
 ### CLI UX (kubectl-style, minimal)
