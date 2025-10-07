@@ -22,8 +22,23 @@
 ### Process Execution Assumptions 
 
 ### Authentication
+- mTLS over TLS1.3 to satisfy requirement for strongest security
+ - enforce this in Go by setting min/max version 
+ - Go handles choice of cipher suite (TODO add the thingies Go use for default here)
+   - https://go.dev/blog/tls-cipher-suites Go began doing this from 1.7, just ensure TLS13 is configured and forced with tls.Config
+- 256-bit Ed25519 certs (more secure than 3072-bit RSA), faster signature operations, smaller cert size to reduce network overload, constant-time implementation to prevent timing attacks
+- self-signed CA for development, generate with make-file 
+- identity extracted from client certificates 
+- Future: let's encrypt, enterprise CA/PKI
 
 ### Authorization 
+- Hard-code permission model 
+- ABAC instead of RBAC for extensibility and security
+  - abilities: start, stop view, stream
+  - resources: ( this can be tags of resources/processes; Future- allow-list of processes/binaries with tags)
+- client ed25519 certs have attributes like user id, org
+- stateless authz, rely on CA to issue/revoke certs. server only checks for whether identity extracted from client certs has authority to perform action on resourceß
+- Future: use OPA and write Rego to replace hard-coded authz policies
 
 ### Output Streaming 
 1 - efficient discovery: Coalescing notify channel (`chan struct{}`, buffer=1) prevents polling
@@ -37,14 +52,23 @@
 2 - disk usage: currently unbounded (TODO: add per-job output size limits)
 3 - file cleanup: anonymous files deleted when last reader exits (TODO - decide on whether to put in scheduled cleanup)
 
-### CLI UX
-
+### Design Rationale
+- Minimal, discoverable commands for core job lifecycle and output streaming
+- All commands support mTLS authentication
+- Output streaming supports late joiners and binary-safe data
+- Consistent error handling and user feedback
 ### Non-functional Requirements
+(Requirements: consistent error output & handling, no crashing)
+- Error handling:
+  - Client-facing: clear gRPC status codes, short actionable error messages (no stack traces, redact sensitive info).
+  - Server-side: error logs with pid/command and request id for failures/rejects; lifecycle logs (start/exit) only if --verbose is on.
+- Metrics: None by default to keep scop small; if needed, could expose expvar counters (errors_total, jobs_running) behind a flag (TODO, not implemented).
 
 ### Build and Development 
 - linting to satisfy style requirement and consistency 
 - Makefile for reproducible builds (native to Linux), explicit targets, certificate generation
 - stdlib + gRPC only, no third-party concurrency libraries
+  - Majority of features required can be delegated to go and gRPC built-in abilities
 - Built-in toolchain (`go test -race`, `go build -race`) for race detection (build this into testing and CI)
 - Minimal dependencies: stdlib + gRPC only
 - Hardcoded configurations with TODO comments for future extensibility
@@ -55,6 +79,13 @@
 
 ## Proposed API
 [See the gRPC API definition in k3po.proto](proto/k3po/v1/k3po.proto)
+
+## Edge Cases
+TODO link sections to these edge cases from other subsections
+- Two clients try to execute same command at the same time
+- Late joiners
+- SLow/Long hanging clients 
+- Client disconnection 
 
 ## Security Considerations
 
@@ -81,5 +112,15 @@ Outside of scope:
 - Client-side command construction and quoting
 - User's local filesystem permissions and access
 - User's local environment variables (unless explicitly passed to jobs)
+
+### Process Isolation
+
+Independent job instances: identical commands create separate processes to prevent:
+- cross-client information leakage
+- unexpected job termination affecting multiple clients
+- complex ownership and authorization edge cases
+- shared state debugging complexity
+
+Resource implications: multiple identical jobs consume proportional resources, which is acceptable for the prototype scope.
 
 ## Milestones
