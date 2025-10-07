@@ -57,6 +57,7 @@
 - All commands support mTLS authentication
 - Output streaming supports late joiners and binary-safe data
 - Consistent error handling and user feedback
+
 ### Non-functional Requirements
 (Requirements: consistent error output & handling, no crashing)
 - Error handling:
@@ -76,6 +77,11 @@
 #### Testing
 - Minimal happy/err path test coverage for critical paths: authn, authz,
 -	Team checkoff needed: 3rd party dependency "github.com/stretchr/testify/require" for readable tests
+
+### CLI UX (kubectl-style, minimal)
+- Use clear verbs and resource types: `c3po exec`, `c3po describe <job-id>`, `c3po stop <job-id>`, `c3po `, etc.
+- TODO add some examples
+- skipping `c3po login` because have mTLS; can have it in future for better UX and explicitness
 
 ## Proposed API
 [See the gRPC API definition in k3po.proto](proto/k3po/v1/k3po.proto)
