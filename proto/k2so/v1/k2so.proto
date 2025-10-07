@@ -1,27 +1,98 @@
 syntax = "proto3";
 
+package k2so.v1;
+
 option go_package = "github.com/nombiezinja/teleport-ti-zhang-challenge-1/proto/k2so/v1;v1";
 
+import "google/protobuf/timestamp.proto";
+
 service K2SO {
-  rpc StartProcess (StartProcessRequest) returns (StartProcessResponse);
-  rpc StopProcess (StopProcessRequest) returns (StopProcessResponse);
-  rpc GetProcessStatus (GetProcessStatusRequest) returns (GetProcessStatusResponse);
-  rpc StreamProcessOutput (StreamProcessOutputRequest) returns (stream ProcessOutputChunk);
+  rpc Run(RunRequest) returns (RunResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Logs(LogsRequest) returns (stream LogsResponse);
 }
 
-message StartProcessRequest {}
-message StartProcessResponse {}
-message StopProcessRequest {}
-message StopProcessResponse {}
-message GetProcessStatusRequest {}
-message GetProcessStatusResponse {}
-message StreamProcessOutputRequest {}
-message ProcessOutputChunk {}
+message RunRequest {
+  string binary = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  string working_dir = 4;
+}
 
-enum ProcessState {
-  PROCESS_STATE_UNSPECIFIED = 0;
-  PROCESS_STATE_RUNNING = 1;
-  PROCESS_STATE_EXITED = 2;
-  PROCESS_STATE_UNKNOWN = 3;
-  PROCESS_STATE_TERMINATED = 4;
+message RunResponse {
+  string job_id = 1;
+  // Errors communicated via gRPC status codes:
+  // - INVALID_ARGUMENT: bad binary path, invalid args
+  // - RESOURCE_EXHAUSTED: job limits exceeded  
+  // - PERMISSION_DENIED: not authorized for 'run' action
+}
+
+message DeleteRequest {
+  string job_id = 1;
+}
+
+message DeleteResponse {
+  // Errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal  
+  // - FAILED_PRECONDITION: job already terminated
+}
+
+message DescribeRequest {
+  string job_id = 1;
+}
+
+message DescribeResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+  optional int32 pid = 3;
+  string binary = 4;
+  repeated string args = 5;
+  google.protobuf.Timestamp created_at = 6;
+  optional google.protobuf.Timestamp started_at = 7;
+  optional google.protobuf.Timestamp finished_at = 8;
+  optional int32 exit_code = 9;
+  optional int32 signal = 10;
+  string owner = 11;
+  optional JobResourceUsage resource_usage = 12;
+  // Errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal
+}
+
+message JobResourceUsage {
+  int64 output_bytes = 1;
+  optional double runtime_seconds = 2;
+}
+
+message LogsRequest {
+  string job_id = 1;
+  bool follow = 2;
+  // TODO: L5 - add offset support for resume/late joiners
+  // int64 offset = 3;
+}
+
+message LogsResponse {
+  bytes data = 1;
+  bool eof = 2;
+  optional int64 sequence = 3;
+  // TODO: L5 - add offset support for resume/late joiners
+  //int64 offset = 4;
+  // Stream errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal
+  // - RESOURCE_EXHAUSTED: output size limits exceeded
+}
+
+// Job execution lifecycle states (distinct from gRPC status codes)
+// RPC errors (auth, validation) use gRPC status codes
+// Job execution states use this enum + exit_code/signal fields for details
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_PENDING = 1;
+  JOB_STATUS_RUNNING = 2;
+  JOB_STATUS_COMPLETED = 3;
+  JOB_STATUS_FAILED = 4;
+  JOB_STATUS_TERMINATING = 5;
 }
