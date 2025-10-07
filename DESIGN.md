@@ -41,10 +41,11 @@ client == mTLS/TLS1.3 ==> server
   - Deep validate (absolute path, EvalSymlinks, allow-listed dirs, exec perms)
   - Prepare job (job_id, anon tmp output file, new PGID, env)
   - Spawn (execve via exec.CommandContext; no shell/TTY)
-  - Stream (byte offset, ReadAt, coalesced notify; binary-safe)
+  - Stream (ReadAt, notify channels; binary-safe)
   - Lifecycle (TERM grace → KILL; reap; finalize status; GC TBD)
 
 ## Design Details
+
 ### 1 - Input Validation 
 - Thin client, server-side validation. Client will use `flag` rather than `cobra`.
   - Can upgrade in future should need arise. 
@@ -78,7 +79,7 @@ Development Root CA (self-signed, long-lived)
   - context will be minimal for this challenge; future could include IP restrictions, rate limiting, etc. 
 - Stateless evaluation: server only checks client cert attributes against hardcoded policies
 - Principals can only `delete` jobs they created
-- Principals must fullfill both action and resource check to perform request
+- Principals must fulfill both action and resource check to perform request
 
 #### Principal Attributes (from client cert SAN fields)
 - User ID only: `email:nimbus@example.com` or `URI:urn:principal:nimbus`
@@ -93,38 +94,52 @@ Development Root CA (self-signed, long-lived)
 - Replace hardcoded rules with OPA/Rego policies for policy-as-code
 - Additional context validation
 
-5 - Output Streaming 
-  - efficient discovery to avoid busy-waiting/polling: Coalescing notify channel (`chan struct{}`, buffer=1) prevents polling
-  - historical replay: Late joiners start at offset=0, get full output from process start
-  - bounded heap memory: Anonymous temp file prevents unbounded Go memory growth
-  - no text assumptions: Raw byte streaming throughout, bina  -safe
-  - concurrent client support: `os.File.ReadAt` allows multiple readers without contention
+### 5 - Output Streaming 
 
-6 - Resource management:
-    - heap memory: bounded by design (fixed buffers, no output accumulation)
-    - disk usage: currently unbounded (TODO: add p    -job output size limits)
-    - file cleanup: anonymous files deleted when last reader exits (TODO - decide on whether to put in scheduled cleanup)
+#### Storage & Memory Management
+- Anonymous temp files per job (unlink after open) to prevent unbounded heap growth
+- Single writer (server goroutine), multiple concurrent readers via `os.File.ReadAt`
+- Capture combined stdout/stderr to single file (no headers needed) (Not Prod Ready no per-stream tags, ordered per-write as delivered)
+- Location: `/tmp/k2so/job-<uuid>.log`, e.g., `/tmp/k2so/job-a1b2c3d4.log` (Not Prod ready would prefer to put in `/run`)
+
+#### Client Experience
+- Multiple concurrent clients supported via independent streams
+- `k2so <job-id> logs` snapshot 
+- `k2so <job-id> logs -f` live updates
+- Process exit closes all streams
+- Server doesn't track per-client read positions, each gRPC stream is independent
+
+#### Efficiency
+- Buffered channel (cap=1) prevents blocking writers
+- Multiple readers can all receive the same notification
+
+#### Future
+-Use tmpfs (/run/k2so) so data never hits disk.
+-O_TMPFILE (Linux): create nameless files from the start (no brief window with a name)
+-memfd_create: pure RAM FD, cannot be linked; add seals to prevent writes/shrinks (needs x/sys/unix/CGO).
+- Lock down process access: run under a dedicated service user, umask 077, per-job dir 0700; consider procfs hidepid=2 and disallow ptrace (Yama) to reduce /proc snooping.
+- Always set O_CLOEXEC to prevent FD inheritance; don’t log FD paths (/proc/.../fd/...) or job IDs in places others can read.
+- Output caps (128 MiB/job), return gRPC status code RESOURCE_EXHAUSTED (code 8) 
+- Enforce per-job and global size caps; fail gracefully on exhaustion
 
 ### Non-functional Requirements
 - Error handling:
-  - Client-facing: clear gRPC status codes, short actionable error messages (no stack traces, redact sensitive info).
-  - Server-side: error logs with pid/command and request id for failures/rejects; lifecycle logs (start/exit) only if --verbose is on.
-
-### Error Model
-Uses [canonical gRPC status codes](https://grpc.github.io/grpc/core/md_doc_statuscodes.html)
-- Metrics: None by default to keep scop small; if needed, could expose expvar counters (errors_total, jobs_running) behind a flag (TODO, not implemented).
+  - Client-facing: clear gRPC status codes, short actionable error messages (no stack traces, redact sensitive info)
+  - Server-side: persist error logs with pid/command and request id for failures/rejects; log all else to stdout
+  - Uses [canonical gRPC status codes](https://grpc.github.io/grpc/core/md_doc_statuscodes.html)
+- No metrics by default to keep scope small; if needed, could expose expvar counters (errors_total, jobs_running) behind a flag (TODO, not implemented).
+- Future improvements see [Production-Level Features](#production-level-features-beyond-challenge-scope)
 
 ### Build and Development 
-- linting to satisfy style requirement and consistency 
+- Minimal CI with linting to satisfy style requirement and consistency 
 - Makefile for reproducible builds (native to Linux), explicit targets, certificate generation
-- stdlib + gRPC only, no third-party concurrency libraries
+- stdlib + gRPC only
   - Majority of features required can be delegated to go and gRPC built-in abilities
 - Built-in toolchain (`go test -race`, `go build -race`) for race detection (build this into testing and CI)
-- Minimal dependencies: stdlib + gRPC only
 - Hardcoded configurations with TODO comments for future extensibility
 
 #### Testing
-- Minimal happy/err path test coverage for critical paths: authn, authz
+- Minimal happy/err path test coverage for critical paths: authn, authz, core functionalities
 -	Team checkoff needed: 3rd party dependency "github.com/stretchr/testify/require" for readable tests
 
 ### CLI UX (kubectl-style, minimal)
@@ -182,6 +197,7 @@ See README.md
 
 ### Production-Level Features (Beyond Challenge Scope)
 - HA control plane w leader election, distributed runners, failover
+- Using systemd (invoked via systemctl), apply cgroup limits, and ensure TERM KILL teardown.
 - distributed scheduling, runner pools 
 - security - authz with OPA, write REGO policies, SPIFFE, secrets management, cert rotation
 - observability- OTEL traces, Prometheus metrics, structured logs, ebpf stuffs
