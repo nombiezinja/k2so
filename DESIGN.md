@@ -1,10 +1,10 @@
-# K3PO Technical Design Document
+# K2SO Technical Design Document
 [See requirements in the README](README.md#requirements) condensed from [original requirements](https://github.com/gravitational/careers/blob/main/challenges/systems/challenge-1.md). 
 
 ## Naming Choice
-- [K3PO is a blunt security bot who tells it like it is](https://starwars.fandom.com/wiki/K-3PO)
-- K3PO is a good little bot
-- K3PO died too early, this control plane would too since everything is built with minimal scope and minimal prod considerations around reliability and resilience
+- [K2SO is a blunt security bot who tells it like it is](https://starwars.fandom.com/wiki/K-2SO)
+- K2SO is a good little bot
+- K2SO died too early, this control plane would too since everything is built with minimal scope and minimal prod considerations around reliability and resilience
 - A more serious name is preferred for prod-ready projects (e.g. processctl,jobctl,etc). Boring is better for enterprise tooling.
 
 ## Design Approach 
@@ -79,12 +79,12 @@
 -	Team checkoff needed: 3rd party dependency "github.com/stretchr/testify/require" for readable tests
 
 ### CLI UX (kubectl-style, minimal)
-- Use clear verbs and resource types: `c3po exec`, `c3po describe <job-id>`, `c3po stop <job-id>`, `c3po `, etc.
+- Use clear verbs and resource types: `k2so exec`, `k2so describe <job-id>`, `k2so stop <job-id>`, `k2so `, etc.
 - TODO add some examples
-- skipping `c3po login` because have mTLS; can have it in future for better UX and explicitness
+- skipping `k2so login` because have mTLS; can have it in future for better UX and explicitness
 
 ## Proposed API
-[See the gRPC API definition in k3po.proto](proto/k3po/v1/k3po.proto)
+[See the gRPC API definition in k2so.proto](proto/k2so/v1/k2so.proto)
 
 ## Edge Cases
 TODO link sections to these edge cases from other subsections
