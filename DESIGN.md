@@ -124,8 +124,8 @@ Linux (cgroup v2), single host, dev CA with long-lived leaf certs
 ### In Scope
 - AuthN: TLS 1.3 mTLS; SAN-based identity; EKU=ClientAuth (see [Authentication](#3---authentication))
 - AuthZ: deny-by-default ABAC (subject × resource × action × context) (see [Authorization](#4---authorization))
-- Input validation: absolute path, EvalSymlinks, allow-listed dirs, arg/env caps (see [Input Validation Details](#input-validation-details))
-- Execution: direct execve (no shell/TTY), spawn in a new PGID (SysProcAttr{Setpgid:true}) and signal the PGID, env allow-list, umask 077
+- Input validation: absolute path, EvalSymlinks, allow-listed dirs, arg caps (see [Input Validation Details](#input-validation-details))
+- Execution: direct execve (no shell/TTY), spawn in a new PGID (SysProcAttr{Setpgid:true}) and signal the PGID, default env only, umask 077
 - Isolation: PGID signals (TERM 60s timeout -> SIGKILL); per-job output caps (L5: cgroup limits)
 - Runtime storage: `/tmp/k2so/job-<uuid>.out`; unlink after open (see [Storage & Memory Management](#storage--memory-management))
 
@@ -137,13 +137,14 @@ Linux (cgroup v2), single host, dev CA with long-lived leaf certs
 - Identity: principal from SAN URI; ignore CN; long-lived certs (dev only) (see [Authentication](#3---authentication))
 - Filesystem: absolute path within allow-listed roots; anonymous temp files (see [Input Validation Details](#input-validation-details))
 - Process: execve + setpgid(); no PATH lookup; explicit cwd; O_CLOEXEC on all FDs
-- Resource/DoS: arg/env/chunk/output caps; max concurrent jobs (see [Non-functional Requirements](#non-functional-requirements))
+- Resource/DoS: arg/chunk/output caps; max concurrent jobs (see [Non-functional Requirements](#non-functional-requirements))
 
 ### Principles
 deny-by-default; server-generated job IDs; no shell interpretation; binary-safe streaming (see [CLI UX](#cli-ux-kubectl-style-minimal), [Output Streaming](#5---output-streaming)).
 
 ### Input Validation Details
-- Cap arg size at ~64 args, ~4kb per arg/env to prevent abuse
+- Cap arg size at ~64 args, ~4kb per arg to prevent abuse
+- No custom environment variables - jobs run with server's default environment only (minimal scope)
 - Direct `exec.Command(binary, arg1, arg2, ...)` usage maps to Linux `execve()` without interpretation
 - Future: whitelist of allowed binary directories (see [Future Work](#future-work))
 - Validate file exists & is executable by the service user

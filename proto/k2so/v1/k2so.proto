@@ -18,10 +18,6 @@ message RunRequest {
   string binary = 1;
   // args contains command arguments (max 64 args, 4KB per arg, no shell interpretation).
   repeated string args = 2;
-  // env contains environment variables (allow-listed keys only, 4KB per value).
-  map<string, string> env = 3;
-  // working_dir is the working directory (absolute path, must exist).
-  string working_dir = 4;
 }
 
 message RunResponse {
@@ -111,11 +107,7 @@ message LogsResponse {
   // - INTERNAL: unexpected server error
 }
 
-// Job execution lifecycle states (distinct from gRPC status codes).
-// RPC errors (auth, validation) use gRPC status codes.
-// Job execution states use this enum + exit_code/signal fields for details.
-//
-// Design choice: Job-level states rather than Linux process states (R/S/D/Z/T).
+// Job-level states rather than Linux process states (R/S/D/Z/T).
 // Linux sleeping/waiting processes all appear as RUNNING to job clients.
 // Clients care about job completion, not low-level process scheduling states.
 enum JobStatus {
