@@ -23,6 +23,7 @@ message RunRequest {
 message RunResponse {
   // job_id is the server-generated unique identifier for the job.
   string job_id = 1;
+  // TODO: add structured error details for validation errors, resource limits
   // Errors communicated via gRPC status codes:
   // - INVALID_ARGUMENT: bad binary path, invalid args
   // - RESOURCE_EXHAUSTED: job limits exceeded
