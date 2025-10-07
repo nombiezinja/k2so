@@ -72,18 +72,11 @@ message DescribeResponse {
   optional int32 signal = 10;
   // owner is the principal from mTLS client cert SAN.
   string owner = 11;
-  // resource_usage contains job resource consumption details (optional).
-  optional JobResourceUsage resource_usage = 12;
   // Errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
   // - UNAVAILABLE: server overloaded or shutting down
   // - INTERNAL: unexpected server error
-}
-
-message JobResourceUsage {
-  int64 output_bytes = 1;
-  optional double runtime_seconds = 2;
 }
 
 message LogsRequest {
@@ -96,7 +89,6 @@ message LogsRequest {
 message LogsResponse {
   bytes data = 1;
   bool eof = 2;
-  optional int64 sequence = 3;
   // TODO: L5 - add offset support for resume/late joiners
   //int64 offset = 4;
   // Stream errors communicated via gRPC status codes:

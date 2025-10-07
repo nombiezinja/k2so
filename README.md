@@ -7,23 +7,18 @@ Below are concise checklists consolidated from the original doc, to ensure all r
 ## TODOs 
 - [x] Parse requirements
 - [x] Write design doc
-- [ ] Initial protos
+- [x] Initial protos
 - [ ] Design doc communications & approval
 - [ ] Implementation 
-  - [ ] Milestone 1
-  - [ ] Milestone 2
-  - [ ] Milestone 3 
+  - [ ] M1: protos and gRPC service
+  - [ ] M2: run/delete job
+  - [ ] M3: output streaming support
+  - [ ] M4: mTLS authn
+  - [ ] M5: hard-coded abac authz
+  - [ ] M6: CLI client
+  - [ ] M7: testing/hardening/CI
+  - [ ] M8: docs cleanup
 - [ ] Verification 
-
-## Development Milestones 
-M1: protos and gRPC service
-M2: start/stop job
-M3: output streaming support
-M4: mTLS authn
-M5: hard-coded abac authz
-M6: CLI client
-M7: testing/hardening/CI
-M8: docs cleanup
 
 ## Requirements Checklist 
 
