@@ -51,7 +51,7 @@ client == mTLS/TLS1.3 ==> server
   - Can upgrade in future should need arise. 
 - Additional input validation rules in [Security Considerations: Input Validation](#input-validation)
 
-### 2 - Supported processes
+### 2 - Supported Job Types
 - Executables on disk (e.g. /usr/bin/ls, /usr/bin/ruby)
 - No raw syscalls: jobs execute as normal processes via `execve()` by `exec.Command`; clients cannot specify syscalls directly (server may use syscalls internally for resource management)
 - Absolute path only; support for $PATH look up a future TODO (see [Security Considerations: Input Validation](#input-validation))
@@ -78,8 +78,15 @@ Development Root CA (self-signed, long-lived)
 - Authorization decision: `allow = f(principal_attributes, action, resource, context)`
   - context will be minimal for this challenge; future could include IP restrictions, rate limiting, etc. 
 - Stateless evaluation: server only checks client cert attributes against hardcoded policies
-- Principals can only `delete` jobs they created
 - Principals must fulfill both action and resource check to perform request
+
+#### Job Ownership and Access Control
+- Job Creation: Any authenticated principal can create jobs (`run` action)
+- Job Ownership: Jobs are owned by the principal that created them
+- Log Access: Principals can only access logs (`logs` action) for jobs they own
+- Job Management: Principals can only `delete`, `describe`, and `delete` jobs they own
+- Cross-Principal Access: Denied - principals cannot access other principals' job logs or metadata
+- Rationale: Prevents information leakage between different users/services sharing the same K2SO instance
 
 #### Principal Attributes (from client cert SAN fields)
 - User ID only: `email:nimbus@example.com` or `URI:urn:principal:nimbus`
@@ -100,13 +107,13 @@ Development Root CA (self-signed, long-lived)
 - Anonymous temp files per job (unlink after open) to prevent unbounded heap growth
 - Single writer (server goroutine), multiple concurrent readers via `os.File.ReadAt`
 - Capture combined stdout/stderr to single file (no headers needed) (Not Prod Ready no per-stream tags, ordered per-write as delivered)
-- Location: `/tmp/k2so/job-<uuid>.log`, e.g., `/tmp/k2so/job-a1b2c3d4.log` (Not Prod ready would prefer to put in `/run`)
+- Location: `/tmp/k2so/job-<uuid>.out`, e.g., `/tmp/k2so/job-a1b2c3d4.out` (Not Prod ready would prefer to put in `/run`)
 
 #### Client Experience
 - Multiple concurrent clients supported via independent streams
 - `k2so <job-id> logs` snapshot 
 - `k2so <job-id> logs -f` live updates
-- Process exit closes all streams
+- Job completion closes all streams
 - Server doesn't track per-client read positions, each gRPC stream is independent
 
 #### Efficiency
@@ -143,23 +150,61 @@ Development Root CA (self-signed, long-lived)
 -	Team checkoff needed: 3rd party dependency "github.com/stretchr/testify/require" for readable tests
 
 ### CLI UX (kubectl-style, minimal)
-- Use clear verbs and resource types: `k2so exec`, `k2so describe <job-id>`, `k2so stop <job-id>`, `k2so `, etc.
-- TODO add some examples
-- skipping `k2so login` because have mTLS; can have it in future for better UX and explicitness
 
-## Proposed API
-[See the gRPC API definition in k2so.proto](proto/k2so/v1/k2so.proto)
+```bash
+# Execute commands
+k2so run /usr/bin/ls -la /tmp
+k2so run /usr/bin/ruby /path/to/lol.rb
 
-## Edge Cases
-TODO link sections to these edge cases from other subsections
-- Two clients try to execute same command at the same time
-- Late joiners
-- SLow/Long hanging clients 
-- Client disconnection 
+# View job outputs  
+k2so logs <job-id>           # Snapshot mode (current output)
+k2so logs -f <job-id>        # Follow mode (live stream)
 
-## Security Considerations
+# Job management
+# Job status, exit code, metadata
+k2so describe <job-id>       
 
-### Input Validation
+ # Terminate running job
+k2so delete <job-id>      
+
+# List recent jobs (basic info)
+k2so list                    
+```
+
+#### Examples
+```bash
+# Run a command, get job ID back
+$ k2so run /usr/bin/echo "hello world"
+job-a1b2c3d4
+
+# Stream the output
+$ k2so logs job-a1b2c3d4
+hello world
+
+# Run long-running command and follow output
+$ k2so run /usr/bin/ping -c 5 8.8.8.8
+job-iamauuid
+$ k2so logs -f job-iamauuid
+PING 8.8.8.8 (8.8.8.8): 56 data bytes
+64 bytes from 8.8.8.8: icmp_seq=0 ttl=117 time=12.345 ms
+...
+
+# Check job status
+$ k2so describe job-iamalsoauuid
+Job ID: job-iamalsoauuid
+Command: /usr/bin/ping -c 5 8.8.8.8
+Status: completed
+Exit Code: 0
+Started: 2025-01-15T10:30:45Z
+Completed: 2025-01-15T10:30:50Z
+```
+
+#### Future 
+- `k2po login` sso to login and generate client cert
+
+### Security Considerations
+
+#### Input Validation
 - Cap arg size at ~64 args, ~4kb per arg/env to prevent abuse.
 - Only support absolute path: prevents `PATH` manipulation attacks
 - Use `filepath.EvalSymlinks()` to prevent directory traversal
@@ -171,15 +216,51 @@ TODO link sections to these edge cases from other subsections
 NOTE FOR TODO IN DOC - make sure CLI design includes this consideration 
 - Future TODO - whitelist of allowed binary directories
 
-### Process Isolation
+#### Process Isolation
 
-Independent job instances: identical commands create separate processes to prevent:
-- cross-client information leakage
-- unexpected job termination affecting multiple clients
-- complex ownership and authorization edge cases
-- shared state debugging complexity
+- Independent job instances - identical commands create separate processes to prevent:
+  - cross-client information leakage
+  - unexpected job termination affecting multiple clients
+  - complex ownership and authorization edge cases
+  - shared state debugging complexity
 
-Resource implications: multiple identical jobs consume proportional resources, which is acceptable for the prototype scope.
+- Resource implications: multiple identical jobs consume proportional resources, this is ok for the challenge
+
+## Proposed API
+[See the gRPC API definition in k2so.proto](proto/k2so/v1/k2so.proto)
+
+## Edge Cases
+- Two clients execute same command simultaneously: see [Process Isolation](#process-isolation)
+- Multiple clients streaming same job: see [Client Experience](#client-experience)
+- Principal attempts to access another principal's job:
+  - Server returns `PERMISSION_DENIED` error for `logs`, `describe`, `delete` actions
+  - Job ownership verified against client certificate identity (see [Authorization](#4authorization))
+- Late joiners to active job:
+  - Snapshot mode: get complete output history from start (see [Storage & Memory Management](#storage--memory-management))
+  - (stretch)Follow mode: join at current EOF, receive only new output
+- Slow/hanging clients: see [Efficiency](#efficiency)
+  - gRPC handles per-client flow control automatically
+- Client disconnection during streaming:
+  - gRPC context cancellation cleans up streaming goroutines
+  - Server doesn't track client state, so no cleanup needed
+  - Anonymous temp files remain available for other clients
+- Job becomes unresponsive
+  - SIGTERM -> grace period -> SIGKILL lifecycle (see [Request Flow](#request-flow))
+  - Process groups ensure child processes also terminated (L5 stretch goal)
+  - Anonymous temp files auto-cleanup when server closes FDs
+- Server restart/crash
+  - Anonymous temp files are lost (by design for L4 scope)
+  - In-memory job registry lost - no job ownership or metadata persists across restarts
+  - Running jobs become orphaned (underlying processes not managed by K2SO after restart)
+- mTLS certificates remain valid across restarts
+- Output exceeds limits:
+- Per-job caps terminate job and return RESOURCE_EXHAUSTED (see [Future](#future))
+- Anonymous temp files prevent unbounded memory growth
+- Notification channel remains responsive during cleanup
+- Too many concurrent jobs:
+  - No explicit limits in L4 - relies on OS process limits
+  - Each job gets independent resources (see [Architecture](#architecture))
+  - Future: implement global job limits and queuing 
 
 ## Milestones
 See README.md 
