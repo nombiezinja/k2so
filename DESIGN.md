@@ -29,8 +29,8 @@
 - TLS: Enforce TLS 1.3 only (`tls.Config{MinVersion: tls.VersionTLS13}`);[Go handles choice of cipher suite after 1.17](https://go.dev/blog/tls-cipher-suites)
 - Ed25519 certs (rather than RSA, to achieve comparable security with lower network load)
 - Long-lived root cert, short lived leaf certs generated via Makefile; avoid revocation complexity
-- Identity extracted from SAN URI; CN ignored; EKU=ClientAuth required.
-- Future: enterprise CA/PKI, cert rotation (see [Future Work](#future-work))
+- Identity extracted from SAN URI; CN ignored; EKU=ClientAuth required
+- Future: enterprise CA/PKI, cert rotation (see [Future Work](#future-work));SPIFFE 
 
 ### 4 - Authorization 
 
@@ -55,7 +55,7 @@
 #### Actions and Resources
 - Actions: `run`, `delete`, `describe`, `logs`
 - Resources: job instances, identified by job-id
-- Future: OPA/Rego policies, cert revocation, resource tagging (see [Future Work](#future-work))
+- Future: OPA/Rego policies, cert revocation, SPIFFE (see [Future Work](#future-work))
 
 ### 5 - Output Streaming 
 
@@ -102,7 +102,8 @@
 - Hardcoded configs with TODO comments for future extensibility
 
 ### CLI UX (kubectl-style, minimal)
-- Not implemented: `k2so login`, `k2so stop`(no resuming jobs we are stupid)
+- Not implemented: `k2so login` 
+- Semantics: `delete` terminates process and removes job from registry (kubectl-style); requirements mention "stop" but delete provides complete cleanup; `k2so stop` could be implemented in the future for jobs that can be resumed
 
 ```bash
 # Execute commands
