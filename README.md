@@ -5,14 +5,25 @@ This repository contains Ti Zhang's solution to [Teleport's candidate assessment
 Below are concise checklists consolidated from the original doc, to ensure all requirements are met, and as a convenient reference during verification during development and review. 
 
 ## TODOs 
-- [ ] Parse requirements
-- [ ] Write design doc
+- [x] Parse requirements
+- [x] Write design doc
+- [ ] Initial protos
 - [ ] Design doc communications & approval
 - [ ] Implementation 
   - [ ] Milestone 1
   - [ ] Milestone 2
   - [ ] Milestone 3 
 - [ ] Verification 
+
+## Development Milestones 
+M1: protos and gRPC service
+M2: start/stop job
+M3: output streaming support
+M4: mTLS authn
+M5: hard-coded abac authz
+M6: CLI client
+M7: testing/hardening/CI
+M8: docs cleanup
 
 ## Requirements Checklist 
 

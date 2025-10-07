@@ -130,3 +130,4 @@ Independent job instances: identical commands create separate processes to preve
 Resource implications: multiple identical jobs consume proportional resources, which is acceptable for the prototype scope.
 
 ## Milestones
+See README.md 
