@@ -45,7 +45,7 @@
 - Job Creation: Any authenticated principal can create jobs (`run` action)
 - Job Ownership: Jobs are owned by the principal that created them
 - Log Access: Principals can only access logs (`logs` action) for jobs they own
-- Job Management: Principals can only `delete`, and `describe` jobs they own
+- Job Management: Principals can only `stop`, and `describe` jobs they own
 - Cross-Principal Access: Denied - principals cannot access other principals' job logs or metadata
 - Rationale: Prevents information leakage between different users/services sharing the same K2SO instance
 
@@ -53,7 +53,7 @@
 - User ID only: `email:nimbus@example.com` or `URI:urn:principal:nimbus`
 
 #### Actions and Resources
-- Actions: `run`, `delete`, `describe`, `logs`
+- Actions: `run`, `stop`, `describe`, `logs`
 - Resources: job instances, identified by job-id
 - Future: OPA/Rego policies, cert revocation, SPIFFE (see [Future Work](#future-work))
 
@@ -68,15 +68,18 @@
 
 #### Job Registry Management
 - Thread-safe job map: `map[string]*Job` with `sync.Mutex` for simplicity (upgrade to RWMutex if read contention becomes an issue)
-- Writer goroutine lifecycle: context cancellation for cleanup when process exits or job deleted
+- Job ID Generation: UUIDv4 using `crypto/rand` package; 16-byte slice with `rand.Read()`, then bit manipulation to ensure v4 compliance. No external UUID dependency (e.g., google/uuid) to reduce build size and dependencies; only need v4 UUIDs without additional wrapper functionality.
+- Writer goroutine lifecycle: context cancellation for cleanup when process exits or job is stopped by client instruction
 - Reader cleanup: automatic via gRPC context cancellation when clients disconnect
 - Error propagation: writer goroutine failures propagated to readers via `job.done.Store(true)` + final notification
 - Late joiner coordination: new readers start from `readCursor=0` and catch up using existing atomic size tracking
+- Job persistence: jobs remain in registry until server death; stopped jobs retain their status, metadata, and output files for continued access
+- Output availability: temp files and content remain accessible for log streaming even after job termination (completion, failure, or stop)
 
 #### Client Experience
 - Multiple concurrent clients supported via independent streams
-- `k2so <job-id> logs` snapshot 
-- `k2so <job-id> logs -f` live updates
+- Principal can have multiple clients (i.e. multiple clients can read from same job if principal owns job)
+- `k2so <job-id> logs` streams live output 
 - Job completion - finish reading to end of output and close streams.
 - Server doesn't track per-client read positions, each gRPC stream is independent
 
@@ -95,6 +98,7 @@ Reader path (per-job):
 Safety & lifecycle (per-job):
 - DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
 - Secure file access: `os.OpenFile` with job-id filename and 0600 perms, use `O_CREATE|O_EXCL` to prevent race conditions (optional for minimal scope, job-id is uuid so collision negligible)
+
 - Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
 - Panic-proof shutdown: entire finalization sequence guarded by `sync.Once` for exactly-once cleanup per job
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
@@ -126,18 +130,16 @@ Safety & lifecycle (per-job):
 
 ### CLI UX (kubectl-style, minimal)
 - Not implemented: `k2so login` 
-- Semantics: `delete` terminates process and removes job from registry (kubectl-style); requirements mention "stop" but delete provides complete cleanup; `k2so stop` could be implemented in the future for jobs that can be resumed
 
 ```bash
 # Execute commands
 k2so run /usr/bin/ls -la /tmp
 k2so run /usr/bin/ruby /path/to/script.rb
-# View job outputs  
+# View job outputs, behaves like -f 
 k2so logs <job-id>           
-k2so logs -f <job-id>       
 # Job management
 k2so describe <job-id>       
-k2so delete <job-id>       
+k2so stop <job-id>
 ```
 
 ## Trust Boundaries

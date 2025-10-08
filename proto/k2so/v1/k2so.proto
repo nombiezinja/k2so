@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 service K2SO {
   rpc Run(RunRequest) returns (RunResponse);
-  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
   rpc Describe(DescribeRequest) returns (DescribeResponse);
   rpc Logs(LogsRequest) returns (stream LogsResponse);
 }
@@ -32,17 +32,17 @@ message RunResponse {
   // - INTERNAL: unexpected server error
 }
 
-message DeleteRequest {
+message StopRequest {
   string job_id = 1;
 }
 
-message DeleteResponse {
+message StopResponse {
   // Errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
   // - UNAVAILABLE: server overloaded or shutting down
   // - INTERNAL: unexpected server error
-  // Success: job terminated and removed from registry (even if already terminated)
+  // Success: job terminated but remains in registry until server shutdown
 }
 
 message DescribeRequest {
@@ -66,7 +66,7 @@ message DescribeResponse {
   optional google.protobuf.Timestamp started_at = 7;
   // finished_at is when the process finished (optional).
   optional google.protobuf.Timestamp finished_at = 8;
-  // Process termination details (available until job deleted from registry).
+  // Process termination details (available until server shutdown; job registry holds status until server death).
   // exit_code is set when process exited normally.
   optional int32 exit_code = 9;
   // signal is set when process was killed by signal.
@@ -82,15 +82,14 @@ message DescribeResponse {
 
 message LogsRequest {
   string job_id = 1;
-  bool follow = 2;
   // TODO: L5 - add offset support for resume/late joiners
-  // int64 offset = 3;
+  // int64 offset = 2;
 }
 
 message LogsResponse {
   bytes data = 1;
   // TODO: L5 - add offset support for resume/late joiners
-  //int64 offset = 2;
+  // int64 offset = 2;
   // Stream errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
@@ -113,7 +112,7 @@ enum JobStatus {
   JOB_STATUS_COMPLETED = 3;
   // Process exited with non-zero code or killed by signal
   JOB_STATUS_FAILED = 4;
-  // Job was deleted/terminated by client request
+  // Job was stopped by client request
   JOB_STATUS_CANCELLED = 5;
   // TODO: Add SIGTERM and graceful shut-down support
   // Process is being terminated but hasn't finished yet
