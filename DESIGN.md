@@ -8,7 +8,7 @@
 
 ## Architecture 
 - CLI client (thin): minimal input validation, presents mTLS cert, constructs gRPC requests
-- gRPC server: deep input validation, handles authn/authz, spawns jobs, manages streaming
+- gRPC server: handles authn/authz, spawns jobs, manages streaming
 - Job registry: in-memory job metadata and ownership tracking, sync.Mutex for concurrent access (TODO: upgrade to RWMutex if read-heavy workloads emerge)
 - Storage: anonymous temp files per job for bounded-memory output streaming
 
@@ -153,7 +153,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 ### In Scope
 - AuthN: TLS 1.3 mTLS; SAN-based identity; EKU=ClientAuth (see [Authentication](#3---authentication))
 - AuthZ: deny-by-default ABAC (subject × resource × action × context) (see [Authorization](#4---authorization))
-- Input validation: absolute path, EvalSymlinks, allow-listed dirs, arg caps (see [Input Validation Details](#input-validation-details))
+- Input validation: absolute path, EvalSymlinks, arg caps (see [Input Validation Details](#input-validation-details))
 - Execution: direct execve (no shell/TTY), default env only, umask 077
 - Isolation: PID-only signals (SIGKILL-only for min scope); deliberate choice over PGID for L4 simplicity, aware of child process orphaning risk; per-job output caps (L5: cgroup limits)
 - Runtime storage: `/tmp/k2so/job-<uuid>.out`; unlink after open (see [Storage & Memory Management](#storage--memory-management))
@@ -170,12 +170,14 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 
 ### Input Validation Details
 - Cap arg size at ~64 args, ~4kb per arg to prevent abuse
-- No custom environment variables - jobs run with server's default environment only (minimal scope)
+- Basic validation only
 - Direct `exec.Command(binary, arg1, arg2, ...)` usage maps to Linux `execve()` without interpretation
-- Future: whitelist of allowed binary directories (see [Future Work](#future-work))
 - Validate file exists & is executable by the service user
-- No shell is invoked; args are passed verbatim to execve (no global metachar bans)
-- Future: shell detection and policy controls - shells provide interactive access,scripting capabilities,shell-built-ins, which may not be appropriate for all principals in multi-tenant environments
+- No shell is invoked by server; args are passed verbatim to execve (no global metachar bans)
+- Future: 
+  - whitelist of allowed binary directories (see [Future Work](#future-work))
+  - shell detection and policy controls - shells provide interactive access,scripting capabilities,shell-built-ins, which may not be appropriate for all principals in a multi-tenant environment
+  - No custom environment variables - jobs run with server's default environment only (minimal scope)
 
 ## Proposed API
 [See the gRPC API definition in k2so.proto](proto/k2so/v1/k2so.proto)
