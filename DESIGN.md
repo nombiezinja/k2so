@@ -75,6 +75,7 @@
 - Late joiner coordination: new readers start from `readCursor=0` and catch up using existing atomic size tracking
 - Job persistence: jobs remain in registry until server death; stopped jobs retain their status, metadata, and output files for continued access
 - Output availability: temp files and content remain accessible for log streaming even after job termination (completion, failure, or stop)
+- File descriptor management: job registry holds open FDs to unlinked temp files until server shutdown; risks include FD exhaustion and memory pressure
 
 #### Client Experience
 - Multiple concurrent clients supported via independent streams
@@ -98,7 +99,6 @@ Reader path (per-job):
 Safety & lifecycle (per-job):
 - DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
 - Secure file access: `os.OpenFile` with job-id filename and 0600 perms, use `O_CREATE|O_EXCL` to prevent race conditions (optional for minimal scope, job-id is uuid so collision negligible)
-
 - Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
 - Panic-proof shutdown: entire finalization sequence guarded by `sync.Once` for exactly-once cleanup per job
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
