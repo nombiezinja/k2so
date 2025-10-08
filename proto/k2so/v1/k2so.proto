@@ -21,7 +21,7 @@ message RunRequest {
 }
 
 message RunResponse {
-  // job_id is the server-generated unique identifier for the job.
+  // job_id is a uuid generated with crypto/rand server side
   string job_id = 1;
   // TODO: add structured error details for validation errors, resource limits
   // Errors communicated via gRPC status codes:
@@ -89,9 +89,8 @@ message LogsRequest {
 
 message LogsResponse {
   bytes data = 1;
-  bool eof = 2;
   // TODO: L5 - add offset support for resume/late joiners
-  //int64 offset = 4;
+  //int64 offset = 2;
   // Stream errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
@@ -104,10 +103,19 @@ message LogsResponse {
 // Linux sleeping/waiting processes all appear as RUNNING to job clients.
 // Clients care about job completion, not low-level process scheduling states.
 enum JobStatus {
+  // Zero value; should not be used in responses
   JOB_STATUS_UNSPECIFIED = 0;
+  // Job created but process not yet started
   JOB_STATUS_PENDING = 1;
+  // Process is actively running (includes Linux sleeping/waiting states)
   JOB_STATUS_RUNNING = 2;
+  // Process exited with code 0 (success)
   JOB_STATUS_COMPLETED = 3;
+  // Process exited with non-zero code or killed by signal
   JOB_STATUS_FAILED = 4;
-  JOB_STATUS_TERMINATING = 5;
+  // Job was deleted/terminated by client request
+  JOB_STATUS_CANCELLED = 5;
+  // TODO: Add SIGTERM and graceful shut-down support
+  // Process is being terminated but hasn't finished yet
+  // JOB_STATUS_TERMINATING = 6; 
 }

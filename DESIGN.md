@@ -130,7 +130,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - AuthZ: deny-by-default ABAC (subject × resource × action × context) (see [Authorization](#4---authorization))
 - Input validation: absolute path, EvalSymlinks, allow-listed dirs, arg caps (see [Input Validation Details](#input-validation-details))
 - Execution: direct execve (no shell/TTY), default env only, umask 077
-- Isolation: PID-only signals (TERM 60s timeout then SIGKILL); deliberate choice over PGID for L4 simplicity, aware of child process orphaning risk; per-job output caps (L5: cgroup limits)
+- Isolation: PID-only signals (SIGKILL-only for min scope); deliberate choice over PGID for L4 simplicity, aware of child process orphaning risk; per-job output caps (L5: cgroup limits)
 - Runtime storage: `/tmp/k2so/job-<uuid>.out`; unlink after open (see [Storage & Memory Management](#storage--memory-management))
 
 ### Out of Scope
@@ -163,9 +163,9 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - Slow/hanging clients: gRPC flow control handles automatically (see [Efficiency](#efficiency))
 - Client disconnection: gRPC context cancellation cleans up, temp files remain available
 - Server graceful shutdown: SIGTERM to all jobs (60s drain), then SIGKILL cleanup, active streams get cancellation
-- Job becomes unresponsive: SIGTERM -> SIGKILL lifecycle (60s timeout)
+- Job becomes unresponsive: SIGKILL-only for simpler L4 implementation
+  - Future: SIGTERM -> SIGKILL lifecycle (60s timeout)
 - Server crash/kill -9: temp files and job registry lost, processes orphaned (L4 design limitation)
-- Resource limits exceeded: return `RESOURCE_EXHAUSTED`, deny new job creation
 
 ## Milestones
 [Project milestones](README.md#milestones)
@@ -174,7 +174,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 
 ### L5 Stretch Goals (Feasible for Challenge)
 - process tree termination: upgrade from PID-only to PGID signals (SysProcAttr{Setpgid:true}) to ensure job's child processes are terminated and prevent orphaned processes
-- cgroup v2 resource control- per-job cpu.max, memory.max, optional io.max  
+- cgroup v2 resource control- per-job cpu.max, memory.max, optional io.max 
 - process groups - proper signal propagation to all descendants  
 - enhanced job lifecycle- graceful shutdown with configurable timeouts
 - basic resource monitoring: track CPU/memory in describe
