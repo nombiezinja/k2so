@@ -61,20 +61,43 @@
 
 #### Storage & Memory Management
 - Anonymous temp files per job (unlink after open) to prevent unbounded heap growth
-- Single writer (server goroutine), multiple concurrent readers via `os.File.ReadAt`
+- Single writer (server goroutine capturing process stdout/stderr), multiple concurrent readers via separate `os.File` handles to same underlying file
+- Each gRPC stream gets its own file handle, enabling independent `ReadAt()` operations without coordination
 - Capture combined stdout/stderr to single file (no headers needed) (Not Prod Ready no per-stream tags, ordered per-write as delivered)
 - Location: `/tmp/k2so/job-<uuid>.out`, e.g., `/tmp/k2so/job-a1b2c3d4.out` (Not Prod ready would prefer to put in `/run`)
+
+#### Job Registry Management
+- Thread-safe job map: `map[string]*Job` with `sync.Mutex` for simplicity (upgrade to RWMutex if read contention becomes an issue)
+- Writer goroutine lifecycle: context cancellation for cleanup when process exits or job deleted
+- Reader cleanup: automatic via gRPC context cancellation when clients disconnect
+- Error propagation: writer goroutine failures propagated to readers via `job.done.Store(true)` + final notification
+- Late joiner coordination: new readers start from `readCursor=0` and catch up using existing atomic size tracking
 
 #### Client Experience
 - Multiple concurrent clients supported via independent streams
 - `k2so <job-id> logs` snapshot 
 - `k2so <job-id> logs -f` live updates
-- Job completion closes all streams
+- Job completion - finish reading to end of output and close streams.
 - Server doesn't track per-client read positions, each gRPC stream is independent
 
-#### Efficiency
-- Buffered channel (cap=1) prevents blocking writers
-- Notifications are hints, each reader does its own tracking
+#### Efficiency & Notification Mechanism
+Writer path (per-job):
+- Input: pipes (stdout/stderr) -> mux -> single writer goroutine per job for centralized I/O
+- Cursor update: append to temp file -> `atomic.StoreUint64(&job.bytesWritten, newSize)` immediately after write
+- Non-blocking notify: coalesced hints only: `select { case job.notifyCh <- struct{}{}: default: }`
+
+Reader path (per-job):
+- Cursor state: each gRPC stream keeps independent in-memory `readCursor` for the specific job
+- Read loop: read fixed chunks (~64 KiB) until `readCursor == atomic.LoadUint64(&job.bytesWritten)`
+- Blocking: if caught up and `!job.done.Load()`: `<-job.notifyCh` then re-read size (notifications are hints only)
+- Flow control: gRPC backpressure isolates slow readers, preventing them from blocking writer or other readers
+
+Safety & lifecycle (per-job):
+- DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
+- Secure file access: `os.OpenFile` with job-id filename and 0600 perms, use `O_CREATE|O_EXCL` to prevent race conditions (optional for minimal scope, job-id is uuid so collision negligible)
+- Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
+- Panic-proof shutdown: entire finalization sequence guarded by `sync.Once` for exactly-once cleanup per job
+- Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
 
 #### Future
 -Use tmpfs (/run/k2so) so data never hits disk.
@@ -150,7 +173,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - Future: whitelist of allowed binary directories (see [Future Work](#future-work))
 - Validate file exists & is executable by the service user
 - No shell is invoked; args are passed verbatim to execve (no global metachar bans)
-- Future - for clients that attempt to execute a shell, can add shell detection and warning, and policy for principals allowed to execute shells
+- Future: shell detection and policy controls - shells provide interactive access,scripting capabilities,shell-built-ins, which may not be appropriate for all principals in multi-tenant environments
 
 ## Proposed API
 [See the gRPC API definition in k2so.proto](proto/k2so/v1/k2so.proto)
