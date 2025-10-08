@@ -1,5 +1,11 @@
 ## Worklog 
 
+### 20251008
+Peer review comment resolution https://github.com/nombiezinja/teleport-ti-zhang-challenge-1/pull/1
+- [x] TOCTOU race elimination
+- [x] clarify design on streaming
+- [x] clarify design on FD usage
+
 ### 20251007
 PR resolution notes for https://github.com/nombiezinja/teleport-ti-zhang-challenge-1/pull/1
 - extracting changes needed from comments

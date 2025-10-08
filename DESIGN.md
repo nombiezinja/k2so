@@ -61,8 +61,8 @@
 
 #### Storage & Memory Management
 - Anonymous temp files per job (unlink after open) to prevent unbounded heap growth
-- Single writer (server goroutine capturing process stdout/stderr), multiple concurrent readers via separate `os.File` handles to same underlying file
-- Each gRPC stream gets its own file handle, enabling independent `ReadAt()` operations without coordination
+- Single writer (server goroutine capturing process stdout/stderr), multiple concurrent readers via shared `*os.File`
+- Concurrent `ReadAt()` operations using `pread()` - no shared offset coordination needed
 - Capture combined stdout/stderr to single file (no headers needed) (Not Prod Ready no per-stream tags, ordered per-write as delivered)
 - Location: `/tmp/k2so/job-<uuid>.out`, e.g., `/tmp/k2so/job-a1b2c3d4.out` (Not Prod ready would prefer to put in `/run`)
 
@@ -75,7 +75,7 @@
 - Late joiner coordination: new readers start from `readCursor=0` and catch up using existing atomic size tracking
 - Job persistence: jobs remain in registry until server death; stopped jobs retain their status, metadata, and output files for continued access
 - Output availability: temp files and content remain accessible for log streaming even after job termination (completion, failure, or stop)
-- File descriptor management: job registry holds open FDs to unlinked temp files until server shutdown; risks include FD exhaustion and memory pressure
+- File descriptor management: job registry holds single FD per job to unlinked temp files until server shutdown; minimal FD usage with shared `*os.File` access
 
 #### Client Experience
 - Multiple concurrent clients supported via independent streams
@@ -87,19 +87,39 @@
 #### Efficiency & Notification Mechanism
 Writer path (per-job):
 - Input: pipes (stdout/stderr) -> mux -> single writer goroutine per job for centralized I/O
-- Cursor update: append to temp file -> `atomic.StoreUint64(&job.bytesWritten, newSize)` immediately after write
-- Non-blocking notify: coalesced hints only: `select { case job.notifyCh <- struct{}{}: default: }`
+- Cursor update: append to temp file -> on successful append `atomic.StoreUint64(&job.bytesWritten, newSize)` -> non-blocking notify
+- Non-blocking notify: coalesced hints only: `select { case job.notifyCh <- struct{}{}: default: }` (cap=1)
+  - Multiple reader coordination: single notification channel acceptable because: notifications are efficiency hints only, channel close on finalize broadcasts to all waiters, and atomic size checks provide real coordination
+- Reader File Access: All readers share the job's `*os.File` via an `io.ReaderAt` wrapper; concurrent `ReadAt()` uses `pread()` (no shared offset). `dup()` per reader is optional (FD isolation) but increases FD pressure.
 
 Reader path (per-job):
 - Cursor state: each gRPC stream keeps independent in-memory `readCursor` for the specific job
-- Read loop: read fixed chunks (~64 KiB) until `readCursor == atomic.LoadUint64(&job.bytesWritten)`
-- Blocking: if caught up and `!job.done.Load()`: `<-job.notifyCh` then re-read size (notifications are hints only)
+- Read loop: `toRead := min(64<<10, int(atomic.LoadUint64(&job.bytesWritten)-readCursor))` with partial read handling
+- Blocking: race-Free state-check loop: The reader uses a structured for/select loop where the terminal state (`job.done.Load()`) is checked both before blocking and immediately after reading all available data:
+  ```go
+  for {
+      r.readAvailableData(job)  // drains until cursor == atomic.LoadUint64(&job.bytesWritten)
+      if job.done.Load() {
+          r.readAvailableData(job)  // Final read after terminal state
+          return
+      }
+      select {
+      case <-job.notifyCh:
+      case <-ctx.Done():
+          return
+      }
+  }
+  ```
+  This ensures the reader cannot enter a permanent wait state if the final data block and notification are missed, eliminating the TOCTOU deadlock.
+  - `readAvailableData()`: Drains all available bytes until `cursor == atomic.LoadUint64(&job.bytesWritten)`, handling partial `ReadAt()` returns with retry loops.
 - Flow control: gRPC backpressure isolates slow readers, preventing them from blocking writer or other readers
 
 Safety & lifecycle (per-job):
 - DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
 - Secure file access: `os.OpenFile` with job-id filename and 0600 perms, use `O_CREATE|O_EXCL` to prevent race conditions (optional for minimal scope, job-id is uuid so collision negligible)
 - Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
+  - Unlinking (reduces inode link count to 0) while keeping writer FD open; inode persists anonymously until all FDs closed
+- File Access Strategy: shared `*os.File` passed to all readers for concurrent `ReadAt()` operations. Anonymous file (post-unlink) remains accessible via existing FD. Readers use independent in-memory cursors with `pread()` syscall avoiding shared offset coordination
 - Panic-proof shutdown: entire finalization sequence guarded by `sync.Once` for exactly-once cleanup per job
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
 
@@ -209,7 +229,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 
 ### Production-Level Features (Beyond Challenge Scope)
 - HA control plane w leader election, distributed runners, failover
-- Using systemd (invoked via systemctl), apply cgroup limits, and ensure TERM KILL teardown.
+- Using systemd (invoked via systemctl), apply cgroup limits, and ensure TERM KILL teardown
 - distributed scheduling, runner pools 
 - security - authz with OPA, write REGO policies, SPIFFE for who is calling, secrets management, cert rotation
 - observability- OTEL traces, Prometheus metrics, structured logs, ebpf stuffs
@@ -217,6 +237,6 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - storage - db-backed metadata, persistent output, retention + encryption at rest
 - Multi-tenant: namespaces, per-tenant quotas
 - supply chain and release integrity - signed binaries, SLSA, SBOMs
-- platform maturity - versioned APIs, SLOs, chaos engineering, disaster recoveryy, rate limits, stream backpressure
+- platform maturity - versioned APIs, SLOs, chaos engineering, disaster recovery, rate limits, stream backpressure
 - enterprise ready - short-lived certs generated for clients after SSO, compliance stuffs, policy-as-code
 
