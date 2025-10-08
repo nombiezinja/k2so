@@ -199,7 +199,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 
 ## Future Work
 
-### L5 Stretch Goals (Feasible for Challenge)
+### L5 Stretch Goals (For Future Poking-around)
 - process tree termination: upgrade from PID-only to PGID signals (SysProcAttr{Setpgid:true}) to ensure job's child processes are terminated and prevent orphaned processes
 - cgroup v2 resource control- per-job cpu.max, memory.max, optional io.max 
 - process groups - proper signal propagation to all descendants  
