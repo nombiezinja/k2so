@@ -115,7 +115,6 @@ Reader path (per-job):
 - Flow control: gRPC backpressure isolates slow readers, preventing them from blocking writer or other readers
 
 Safety & lifecycle (per-job):
-- DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
 - Secure file access: `os.OpenFile` with job-id filename and 0600 perms, use `O_CREATE|O_EXCL` to prevent race conditions (optional for minimal scope, job-id is uuid so collision negligible)
 - Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
   - Unlinking (reduces inode link count to 0) while keeping writer FD open; inode persists anonymously until all FDs closed
@@ -220,6 +219,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 ## Future Work
 
 ### L5 Stretch Goals (For Future Poking-around)
+- DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
 - process tree termination: upgrade from PID-only to PGID signals (SysProcAttr{Setpgid:true}) to ensure job's child processes are terminated and prevent orphaned processes
 - cgroup v2 resource control- per-job cpu.max, memory.max, optional io.max 
 - process groups - proper signal propagation to all descendants  
