@@ -87,30 +87,32 @@
 #### Efficiency & Notification Mechanism
 Writer path (per-job):
 - Input: pipes (stdout/stderr) -> mux -> single writer goroutine per job for centralized I/O
-- Cursor update: append to temp file -> on successful append `atomic.StoreUint64(&job.bytesWritten, newSize)` -> non-blocking notify
-- Non-blocking notify: coalesced hints only: `select { case job.notifyCh <- struct{}{}: default: }` (cap=1)
-  - Multiple reader coordination: single notification channel acceptable because: notifications are efficiency hints only, channel close on finalize broadcasts to all waiters, and atomic size checks provide real coordination
+- Cursor update: append to temp file -> on successful append `atomic.StoreUint64(&job.bytesWritten, newSize)` -> notify all readers
+- Notification: use a `sync.Cond` (with a `sync.Mutex`) for coordination. After each write, the writer calls `cond.Broadcast()` to wake all waiting readers
+  - This guarantees all readers are notified immediately after each write, eliminating the chance of readers sleeping through updates
+  - Given constraints "no busy polling", "do not consider scaling", and "client receives output immediately", this design is chosen as a result of tradeoffs (sacrifice scaling and prioritize requirements)
 - Reader File Access: All readers share the job's `*os.File` via an `io.ReaderAt` wrapper; concurrent `ReadAt()` uses `pread()` (no shared offset). `dup()` per reader is optional (FD isolation) but increases FD pressure.
 
 Reader path (per-job):
 - Cursor state: each gRPC stream keeps independent in-memory `readCursor` for the specific job
 - Read loop: `toRead := min(64<<10, int(atomic.LoadUint64(&job.bytesWritten)-readCursor))` with partial read handling
-- Blocking: race-Free state-check loop: The reader uses a structured for/select loop where the terminal state (`job.done.Load()`) is checked both before blocking and immediately after reading all available data:
+- Blocking: race-free state-check loop: The reader uses a structured for/cond.Wait() loop where the terminal state (`job.done.Load()`) is checked both before blocking and immediately after reading all available data:
   ```go
   for {
-      r.readAvailableData(job)  // drains until cursor == atomic.LoadUint64(&job.bytesWritten)
-      if job.done.Load() {
-          r.readAvailableData(job)  // Final read after terminal state
-          return
-      }
-      select {
-      case <-job.notifyCh:
-      case <-ctx.Done():
-          return
-      }
+    r.readAvailableData(job)  // drains until cursor == atomic.LoadUint64(&job.bytesWritten)
+    if job.done.Load() {
+      r.readAvailableData(job)  // Final read after terminal state
+      return
+    }
+    cond.L.Lock()
+    cond.Wait() // Wait for writer to broadcast
+    cond.L.Unlock()
+    if ctx.Err() != nil {
+      return
+    }
   }
   ```
-  This ensures the reader cannot enter a permanent wait state if the final data block and notification are missed, eliminating the TOCTOU deadlock.
+  This ensures all readers are woken up after every write, guaranteeing minimal latency for output delivery to all clients.
   - `readAvailableData()`: Drains all available bytes until `cursor == atomic.LoadUint64(&job.bytesWritten)`, handling partial `ReadAt()` returns with retry loops.
 - Flow control: gRPC backpressure isolates slow readers, preventing them from blocking writer or other readers
 
@@ -123,6 +125,7 @@ Safety & lifecycle (per-job):
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
 
 #### Future
+-sync.Cond() implementation would bottleneck under high concurrent environment due to Mutex contension, should update implementation
 -Use tmpfs (/run/k2so) so data never hits disk.
 -O_TMPFILE (Linux): create nameless files from the start (no brief window with a name)
 -memfd_create: pure RAM FD, cannot be linked; add seals to prevent writes/shrinks (needs x/sys/unix/CGO).
