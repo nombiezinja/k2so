@@ -1,6 +1,6 @@
-# Teleport Challenge-1 L4
+# K2SO
 
-This repository contains Ti Zhang's solution to [Teleport's candidate assessment challenge](https://github.com/gravitational/careers/blob/main/challenges/systems/challenge-1.md). 
+This repository started from my solution to [Teleport's candidate assessment challenge](https://github.com/gravitational/careers/blob/main/challenges/systems/challenge-1.md). The challenge [did not work out](https://github.com/nombiezinja/k2so/pull/1#issuecomment-3387805898), but the exercise is fun. 
 
 Below are concise checklists consolidated from the original doc, to ensure all requirements are met, and as a convenient reference during verification during development and review. 
 
@@ -8,7 +8,8 @@ Below are concise checklists consolidated from the original doc, to ensure all r
 - [x] Parse requirements
 - [x] Write design doc
 - [x] Initial protos
-- [ ] Design doc communications & approval
+- [x] Design doc v1
+- [ ] Design doc update with challenge-specific constraints removed
 - [ ] Implementation 
   - [ ] M1: protos and gRPC service
   - [ ] M2: run/delete job
@@ -33,8 +34,6 @@ Below are concise checklists consolidated from the original doc, to ensure all r
 ### Checklist 
 - [ ]Works on 64-bit linux machines
 - [ ]Server does not rely on shell scripts, external binaries or use containers to execute jobs.
-- [ ]Follow
-  [Go Coding Style](https://github.com/golang/go/wiki/CodeReviewComments) 
 - [ ]Key components happy path& error case tests; no need for 100% coverage
 - [ ]Reproducible builds
 - [ ]Consistent err handling & reporting; no crashing
