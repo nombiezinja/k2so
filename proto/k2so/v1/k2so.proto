@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package k2so.v1;
+
+option go_package = "github.com/nombiezinja/teleport-ti-zhang-challenge-1/proto/k2so/v1;v1";
+
+import "google/protobuf/timestamp.proto";
+
+service K2SO {
+  rpc Run(RunRequest) returns (RunResponse);
+  rpc Stop(StopRequest) returns (StopResponse);
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Logs(LogsRequest) returns (stream LogsResponse);
+}
+
+message RunRequest {
+  // binary is the absolute path to executable (validated: exists, executable)
+  string binary = 1;
+  // args contains command arguments (max 64 args, 4KB per arg, no shell interpretation).
+  repeated string args = 2;
+}
+
+message RunResponse {
+  // job_id is a uuid generated with crypto/rand server side
+  string job_id = 1;
+  // TODO: add structured error details for validation errors, resource limits
+  // Errors communicated via gRPC status codes:
+  // - INVALID_ARGUMENT: bad binary path, invalid args
+  // - RESOURCE_EXHAUSTED: job limits exceeded
+  // - PERMISSION_DENIED: not authorized for 'run' action
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
+}
+
+message StopRequest {
+  string job_id = 1;
+}
+
+message StopResponse {
+  // Errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
+  // Success: job terminated but remains in registry until server shutdown
+}
+
+message DescribeRequest {
+  string job_id = 1;
+}
+
+message DescribeResponse {
+  // job_id is the unique identifier for the job.
+  string job_id = 1;
+  // status is the current job execution state.
+  JobStatus status = 2;
+  // pid is the Linux process ID (optional, set when job starts).
+  optional int32 pid = 3;
+  // binary is the absolute path to the executable.
+  string binary = 4;
+  // args contains the command line arguments as executed.
+  repeated string args = 5;
+  // created_at is when the job was created.
+  google.protobuf.Timestamp created_at = 6;
+  // started_at is when the process started (optional).
+  optional google.protobuf.Timestamp started_at = 7;
+  // finished_at is when the process finished (optional).
+  optional google.protobuf.Timestamp finished_at = 8;
+  // Process termination details (available until server shutdown; job registry holds status until server death).
+  // exit_code is set when process exited normally.
+  optional int32 exit_code = 9;
+  // signal is set when process was killed by signal.
+  optional int32 signal = 10;
+  // owner is the principal from mTLS client cert SAN.
+  string owner = 11;
+  // Errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
+}
+
+message LogsRequest {
+  string job_id = 1;
+  // TODO: L5 - add offset support for resume/late joiners
+  // int64 offset = 2;
+}
+
+message LogsResponse {
+  bytes data = 1;
+  // TODO: L5 - add offset support for resume/late joiners
+  // int64 offset = 2;
+  // Stream errors communicated via gRPC status codes:
+  // - NOT_FOUND: job ID does not exist
+  // - PERMISSION_DENIED: job not owned by requesting principal
+  // - RESOURCE_EXHAUSTED: output size limits exceeded
+  // - UNAVAILABLE: server overloaded or shutting down
+  // - INTERNAL: unexpected server error
+}
+
+// Job-level states rather than Linux process states (R/S/D/Z/T).
+// Linux sleeping/waiting processes all appear as RUNNING to job clients.
+// Clients care about job completion, not low-level process scheduling states.
+enum JobStatus {
+  // Zero value; should not be used in responses
+  JOB_STATUS_UNSPECIFIED = 0;
+  // Job created but process not yet started
+  JOB_STATUS_PENDING = 1;
+  // Process is actively running (includes Linux sleeping/waiting states)
+  JOB_STATUS_RUNNING = 2;
+  // Process exited with code 0 (success)
+  JOB_STATUS_COMPLETED = 3;
+  // Process exited with non-zero code or killed by signal
+  JOB_STATUS_FAILED = 4;
+  // Job was stopped by client request
+  JOB_STATUS_CANCELLED = 5;
+  // TODO: Add SIGTERM and graceful shut-down support
+  // Process is being terminated but hasn't finished yet
+  // JOB_STATUS_TERMINATING = 6; 
+}
