@@ -87,16 +87,16 @@
 #### Efficiency & Notification Mechanism
 Writer path (per-job):
 - Input: pipes (stdout/stderr) -> mux -> single writer goroutine per job for centralized I/O
-- Cursor update: append to temp file -> on successful append `atomic.StoreUint64(&job.bytesWritten, newSize)` -> notify all readers
-- Notification: use a `sync.Cond` (with a `sync.Mutex`) for coordination. After each write, the writer calls `cond.Broadcast()` to wake all waiting readers
-  - This guarantees all readers are notified immediately after each write, eliminating the chance of readers sleeping through updates
-  - Given constraints "no busy polling", "do not consider scaling", and "client receives output immediately", this design is chosen as a result of tradeoffs (sacrifice scaling and prioritize requirements)
+- Cursor update: append to temp file -> on successful append `atomic.StoreUint64(&job.bytesWritten, newSize)` -> non-blocking notify
+- Notification: coalesced `notifyCh := make(chan struct{}, 1)` per job. Writer does `select { case job.notifyCh <- struct{}{}: default: }` (non-blocking)
+  - Multiple reader coordination: single notification channel acceptable because notifications are efficiency hints only, channel close on finalize broadcasts to all waiters, and atomic size checks provide real coordination
+  - Scalable design: avoids mutex contention from sync.Cond, optimized for high concurrent reader scenarios
 - Reader File Access: All readers share the job's `*os.File` via an `io.ReaderAt` wrapper; concurrent `ReadAt()` uses `pread()` (no shared offset). `dup()` per reader is optional (FD isolation) but increases FD pressure.
 
 Reader path (per-job):
 - Cursor state: each gRPC stream keeps independent in-memory `readCursor` for the specific job
 - Read loop: `toRead := min(64<<10, int(atomic.LoadUint64(&job.bytesWritten)-readCursor))` with partial read handling
-- Blocking: race-free state-check loop: The reader uses a structured for/cond.Wait() loop where the terminal state (`job.done.Load()`) is checked both before blocking and immediately after reading all available data:
+- Blocking: race-free state-check loop where the terminal state (`job.done.Load()`) is checked both before blocking and immediately after reading all available data:
   ```go
   for {
     r.readAvailableData(job)  // drains until cursor == atomic.LoadUint64(&job.bytesWritten)
@@ -104,15 +104,14 @@ Reader path (per-job):
       r.readAvailableData(job)  // Final read after terminal state
       return
     }
-    cond.L.Lock()
-    cond.Wait() // Wait for writer to broadcast
-    cond.L.Unlock()
-    if ctx.Err() != nil {
+    select {
+    case <-job.notifyCh:
+    case <-ctx.Done():
       return
     }
   }
   ```
-  This ensures all readers are woken up after every write, guaranteeing minimal latency for output delivery to all clients.
+  This ensures readers never miss data via atomic coordination, with notifications providing efficiency hints for minimal latency.
   - `readAvailableData()`: Drains all available bytes until `cursor == atomic.LoadUint64(&job.bytesWritten)`, handling partial `ReadAt()` returns with retry loops.
 - Flow control: gRPC backpressure isolates slow readers, preventing them from blocking writer or other readers
 
@@ -121,6 +120,7 @@ Safety & lifecycle (per-job):
 - Call `os.Remove()` immediately to unlink file and ensure anonymity and keep FD open
   - Unlinking (reduces inode link count to 0) while keeping writer FD open; inode persists anonymously until all FDs closed
 - File Access Strategy: shared `*os.File` passed to all readers for concurrent `ReadAt()` operations. Anonymous file (post-unlink) remains accessible via existing FD. Readers use independent in-memory cursors with `pread()` syscall avoiding shared offset coordination
+- Finalize sequence: `job.done.Store(true)` -> `close(job.notifyCh)` -> readers detect terminal state and exit after final read
 - Panic-proof shutdown: entire finalization sequence guarded by `sync.Once` for exactly-once cleanup per job
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
 
