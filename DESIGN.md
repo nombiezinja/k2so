@@ -125,13 +125,13 @@ Safety & lifecycle (per-job):
 - Writer exit guard: writer I/O loop checks `job.done.Load()` before processing new data to stop before FD cleanup
 
 #### Future
--sync.Cond() implementation would bottleneck under high concurrent environment due to Mutex contension, should update implementation
--Use tmpfs (/run/k2so) so data never hits disk.
--O_TMPFILE (Linux): create nameless files from the start (no brief window with a name)
--memfd_create: pure RAM FD, cannot be linked; add seals to prevent writes/shrinks (needs x/sys/unix/CGO).
+- sync.Cond() implementation would bottleneck under high concurrent environment due to Mutex contension, should update implementation
+- Use tmpfs (/run/k2so) so data never hits disk.
+- O_TMPFILE (Linux): create nameless files from the start (no brief window with a name)
+- memfd_create: pure RAM FD, cannot be linked; add seals to prevent writes/shrinks (needs x/sys/unix/CGO).
 - Lock down process access: run under a dedicated service user, umask 077, per-job dir 0700; consider procfs hidepid=2 and disallow ptrace (Yama) to reduce /proc snooping.
-- Always set O_CLOEXEC to prevent FD inheritance; don’t log FD paths (/proc/.../fd/...) or job IDs in places others can read.
-- Output caps (128 MiB/job), return gRPC status code RESOURCE_EXHAUSTED (code 8) 
+- Always set O_CLOEXEC to prevent FD inheritance; don't log FD paths (/proc/.../fd/...) or job IDs in places others can read.
+- DoS prevention: Hard per-job cap (100-128 MiB). On breach: write up to cap, mark truncated=true, terminate job, surface RESOURCE_EXHAUSTED
 - Enforce per-job and global size caps; fail gracefully on exhaustion
 
 ### Non-functional Requirements
@@ -157,7 +157,7 @@ Safety & lifecycle (per-job):
 # Execute commands
 k2so run /usr/bin/ls -la /tmp
 k2so run /usr/bin/ruby /path/to/script.rb
-# View job outputs, behaves like -f 
+# View job outputs, streams live output (follow behavior default)
 k2so logs <job-id>           
 # Job management
 k2so describe <job-id>       
@@ -177,7 +177,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - AuthZ: deny-by-default ABAC (subject × resource × action × context) (see [Authorization](#4---authorization))
 - Input validation: absolute path, EvalSymlinks, arg caps (see [Input Validation Details](#input-validation-details))
 - Execution: direct execve (no shell/TTY), default env only, umask 077
-- Isolation: PID-only signals (SIGKILL-only for min scope); deliberate choice over PGID for L4 simplicity, aware of child process orphaning risk; per-job output caps (L5: cgroup limits)
+- Isolation: PID-only signals with graceful shutdown (SIGTERM -> SIGKILL after 60s timeout); deliberate choice over PGID for L4 simplicity, aware of child process orphaning risk; per-job output caps with truncation policy
 - Runtime storage: `/tmp/k2so/job-<uuid>.out`; unlink after open (see [Storage & Memory Management](#storage--memory-management))
 
 ### Out of Scope
@@ -212,21 +212,19 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - Slow/hanging clients: gRPC flow control handles automatically (see [Efficiency](#efficiency))
 - Client disconnection: gRPC context cancellation cleans up, temp files remain available
 - Server graceful shutdown: SIGTERM to all jobs (60s drain), then SIGKILL cleanup, active streams get cancellation
-- Job becomes unresponsive: SIGKILL-only for simpler L4 implementation
+- Job becomes unresponsive: SIGTERM -> SIGKILL lifecycle (60s timeout) for graceful process termination
   - Future: SIGTERM -> SIGKILL lifecycle (60s timeout)
-- Server crash/kill -9: temp files and job registry lost, processes orphaned (L4 design limitation)
+- Server crash/kill -9: temp files and job registry lost, processes orphaned
 
 ## Milestones
 [Project milestones](README.md#milestones)
 
 ## Future Work
 
-### L5 Stretch Goals (For Future Poking-around)
-- DoS prevention: mandatory hard file size limit (100 MiB) per job with truncation/overwrite policy when hit
+### Next Steps
 - process tree termination: upgrade from PID-only to PGID signals (SysProcAttr{Setpgid:true}) to ensure job's child processes are terminated and prevent orphaned processes
 - cgroup v2 resource control- per-job cpu.max, memory.max, optional io.max 
 - process groups - proper signal propagation to all descendants  
-- enhanced job lifecycle- graceful shutdown with configurable timeouts
 - basic resource monitoring: track CPU/memory in describe
 - per-job output cap and global limits; fail with RESOURCE_EXHAUSTED
 
@@ -236,7 +234,7 @@ deny-by-default; server-generated job IDs; no shell interpretation; binary-safe 
 - distributed scheduling, runner pools 
 - security - authz with OPA, write REGO policies, SPIFFE for who is calling, secrets management, cert rotation
 - observability- OTEL traces, Prometheus metrics, structured logs, ebpf stuffs
-- advanced isolation: seccomp/AppArmor/userns, rlimits, capabilities 
+- advanced isolation: seccomp/AppArmor/userns, rlimits
 - storage - db-backed metadata, persistent output, retention + encryption at rest
 - Multi-tenant: namespaces, per-tenant quotas
 - supply chain and release integrity - signed binaries, SLSA, SBOMs

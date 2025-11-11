@@ -1,4 +1,4 @@
-module github.com/nombiezinja/teleport-ti-zhang-challenge-1
+module github.com/nombiezinja/k2so
 
 go 1.23
 

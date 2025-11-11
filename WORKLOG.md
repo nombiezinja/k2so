@@ -1,5 +1,12 @@
 ## Worklog 
 
+### 20251103
+- [ ] Update doc and adapt repo for personal practice funsies purposes
+- [ ] restore design for truncation
+- [ ] revert this change - Remove -f; stream behaviour default is follow
+- [ ] revert this change - Replace delete with run everywhere in semantics and design
+- [ ] revert this change - No SIGTERM, use only SIGKILL to reduce scope; update protos to reflect
+
 ### 20251008
 Peer review comment resolution https://github.com/nombiezinja/teleport-ti-zhang-challenge-1/pull/1
 - [x] TOCTOU race elimination

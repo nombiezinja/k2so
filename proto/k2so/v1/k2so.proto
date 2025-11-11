@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package k2so.v1;
 
-option go_package = "github.com/nombiezinja/teleport-ti-zhang-challenge-1/proto/k2so/v1;v1";
+option go_package = "github.com/nombiezinja/k2so/proto/k2so/v1;v1";
 
 import "google/protobuf/timestamp.proto";
 
@@ -26,7 +26,7 @@ message RunResponse {
   // TODO: add structured error details for validation errors, resource limits
   // Errors communicated via gRPC status codes:
   // - INVALID_ARGUMENT: bad binary path, invalid args
-  // - RESOURCE_EXHAUSTED: job limits exceeded
+  // - RESOURCE_EXHAUSTED: job limits exceeded, output size caps breached
   // - PERMISSION_DENIED: not authorized for 'run' action
   // - UNAVAILABLE: server overloaded or shutting down
   // - INTERNAL: unexpected server error
@@ -34,6 +34,8 @@ message RunResponse {
 
 message StopRequest {
   string job_id = 1;
+  // force_kill skips graceful SIGTERM and sends SIGKILL immediately
+  bool force_kill = 2;
 }
 
 message StopResponse {
@@ -42,7 +44,7 @@ message StopResponse {
   // - PERMISSION_DENIED: job not owned by requesting principal
   // - UNAVAILABLE: server overloaded or shutting down
   // - INTERNAL: unexpected server error
-  // Success: job terminated but remains in registry until server shutdown
+  // Success: job enters TERMINATING state, then transitions to CANCELLED
 }
 
 message DescribeRequest {
@@ -73,6 +75,12 @@ message DescribeResponse {
   optional int32 signal = 10;
   // owner is the principal from mTLS client cert SAN.
   string owner = 11;
+  // output_size is the current size of captured output in bytes.
+  int64 output_size = 12;
+  // truncated indicates if output was truncated due to size limits.
+  bool truncated = 13;
+  // termination_reason provides additional context for job termination.
+  optional TerminationReason termination_reason = 14;
   // Errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
@@ -88,12 +96,14 @@ message LogsRequest {
 
 message LogsResponse {
   bytes data = 1;
+  // truncated indicates if this is the final chunk due to size limits.
+  bool truncated = 2;
   // TODO: L5 - add offset support for resume/late joiners
-  // int64 offset = 2;
+  // int64 offset = 3;
   // Stream errors communicated via gRPC status codes:
   // - NOT_FOUND: job ID does not exist
   // - PERMISSION_DENIED: job not owned by requesting principal
-  // - RESOURCE_EXHAUSTED: output size limits exceeded
+  // - RESOURCE_EXHAUSTED: output size limits exceeded, job terminated
   // - UNAVAILABLE: server overloaded or shutting down
   // - INTERNAL: unexpected server error
 }
@@ -108,13 +118,29 @@ enum JobStatus {
   JOB_STATUS_PENDING = 1;
   // Process is actively running (includes Linux sleeping/waiting states)
   JOB_STATUS_RUNNING = 2;
+  // Process is being gracefully terminated (SIGTERM sent, waiting for exit or timeout)
+  JOB_STATUS_TERMINATING = 3;
   // Process exited with code 0 (success)
-  JOB_STATUS_COMPLETED = 3;
+  JOB_STATUS_COMPLETED = 4;
   // Process exited with non-zero code or killed by signal
-  JOB_STATUS_FAILED = 4;
-  // Job was stopped by client request
-  JOB_STATUS_CANCELLED = 5;
-  // TODO: Add SIGTERM and graceful shut-down support
-  // Process is being terminated but hasn't finished yet
-  // JOB_STATUS_TERMINATING = 6; 
+  JOB_STATUS_FAILED = 5;
+  // Job was stopped by client request (SIGTERM -> SIGKILL lifecycle)
+  JOB_STATUS_CANCELLED = 6;
+}
+
+// Provides additional context about why a job terminated
+enum TerminationReason {
+  TERMINATION_REASON_UNSPECIFIED = 0;
+  // Process exited normally
+  TERMINATION_REASON_EXITED = 1;
+  // Process was killed by signal (not from stop request)
+  TERMINATION_REASON_SIGNALED = 2;
+  // Job stopped by client stop request
+  TERMINATION_REASON_CLIENT_STOP = 3;
+  // Job terminated due to server shutdown
+  TERMINATION_REASON_SERVER_SHUTDOWN = 4;
+  // Job terminated due to output size limit
+  TERMINATION_REASON_OUTPUT_LIMIT = 5;
+  // Job failed to start (binary not found, permission denied, etc.)
+  TERMINATION_REASON_START_FAILED = 6;
 }
